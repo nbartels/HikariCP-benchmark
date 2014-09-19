@@ -34,13 +34,14 @@ import com.jolbox.bonecp.BoneCPDataSource;
 import com.mchange.v2.c3p0.ComboPooledDataSource;
 import com.zaxxer.hikari.HikariConfig;
 import com.zaxxer.hikari.HikariDataSource;
+import org.apache.commons.dbcp2.DriverManagerConnectionFactory;
 
 @State(Scope.Benchmark)
 public class BenchBase
 {
     protected static final int MIN_POOL_SIZE = 0;
 
-    @Param({ "hikari", "bone", "tomcat", "c3p0", "vibur" })
+    @Param({ "hikari", "bone", "tomcat", "c3p0", "vibur", "dbcp2" })
     public String pool;
 
     @Param({ "32" })
@@ -77,6 +78,9 @@ public class BenchBase
         case "vibur":
             setupVibur();
             break;
+        case "dbcp2":
+            setupDBCP2();
+            break;
         }
     }
 
@@ -99,6 +103,8 @@ public class BenchBase
             break;
         case "vibur":
             ((ViburDBCPDataSource) DS).terminate();
+        case "dbcp2": 
+            
         }
     }
 
@@ -201,5 +207,31 @@ public class BenchBase
         vibur.start();
 
         DS = vibur;
+    }
+
+    private void setupDBCP2() {
+        org.apache.commons.pool2.impl.GenericObjectPool<org.apache.commons.dbcp2.PoolableConnection> connectionPool;
+            DriverManagerConnectionFactory connectionFactory = new DriverManagerConnectionFactory("jdbc:stub", "sa", "");
+           
+            // Wrap the connections and statements with pooled variants
+            org.apache.commons.dbcp2.PoolableConnectionFactory poolableCF = null;
+            poolableCF = new org.apache.commons.dbcp2.PoolableConnectionFactory(connectionFactory, null);
+
+            poolableCF.setValidationQuery("VALUES 1");
+            poolableCF.setDefaultTransactionIsolation(Connection.TRANSACTION_READ_COMMITTED);
+            poolableCF.setDefaultAutoCommit(false);
+            poolableCF.setRollbackOnReturn(true);
+
+            // Create the actual pool of connections, and apply any properties
+            connectionPool = new org.apache.commons.pool2.impl.GenericObjectPool(poolableCF);
+            connectionPool.setTestOnBorrow(true);
+            connectionPool.setMaxIdle(maxPoolSize);
+
+            connectionPool.setMinIdle(MIN_POOL_SIZE);
+            connectionPool.setMaxTotal(maxPoolSize);
+            connectionPool.setMaxWaitMillis(8000);
+            connectionPool.setMinEvictableIdleTimeMillis((int) TimeUnit.MINUTES.toMillis(30));
+//            connectionPool.setNumTestsPerEvictionRun(numTestsPerEvictionRun);
+            DS = new org.apache.commons.dbcp2.PoolingDataSource(connectionPool);
     }
 }
