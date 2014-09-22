@@ -34,27 +34,30 @@ import com.jolbox.bonecp.BoneCPDataSource;
 import com.mchange.v2.c3p0.ComboPooledDataSource;
 import com.zaxxer.hikari.HikariConfig;
 import com.zaxxer.hikari.HikariDataSource;
+import java.sql.SQLException;
+import org.apache.commons.dbcp2.BasicDataSource;
 import org.apache.commons.dbcp2.DriverManagerConnectionFactory;
+import org.apache.commons.dbcp2.PoolingDataSource;
 
 @State(Scope.Benchmark)
 public class BenchBase
 {
     protected static final int MIN_POOL_SIZE = 0;
 
-    @Param({ "hikari", "bone", "tomcat", "c3p0", "vibur", "dbcp2" })
+    @Param({ "hikari", "bone", "tomcat", "c3p0", "vibur", "dbcp2", "dbcp2-basic" })
     public String pool;
 
-    @Param({ "32" })
+    @Param({ "32", "100", "500", "1000" })
     public int maxPoolSize;
 
     public static volatile DataSource DS;
-
+   
     @Setup
-    public void setup()
+    public void setup() throws SQLException
     {
         try
         {
-            Class.forName("com.zaxxer.hikari.benchmark.stubs.StubDriver");
+            Class.forName(dbDriver);
         }
         catch (ClassNotFoundException e)
         {
@@ -81,11 +84,14 @@ public class BenchBase
         case "dbcp2":
             setupDBCP2();
             break;
+	case "dbcp2-basic":
+	    setupDBCP2basic();
+	    break;
         }
     }
 
     @TearDown
-    public void teardown()
+    public void teardown() throws SQLException
     {
         switch (pool)
         {
@@ -103,16 +109,19 @@ public class BenchBase
             break;
         case "vibur":
             ((ViburDBCPDataSource) DS).terminate();
-        case "dbcp2": 
-            
+        case "dbcp2-basic":
+	    ((BasicDataSource) DS).close();
+	case "dbcp2": 
+            // do nothing 
         }
+	
     }
 
     protected void setupTomcat()
     {
         PoolProperties props = new PoolProperties();
-        props.setUrl("jdbc:stub");
-        props.setDriverClassName("com.zaxxer.hikari.benchmark.stubs.StubDriver");
+        props.setUrl(jdbcURL);
+        props.setDriverClassName(dbDriver);
         props.setUsername("sa");
         props.setPassword("");
         props.setInitialSize(MIN_POOL_SIZE);
@@ -130,7 +139,14 @@ public class BenchBase
 
         DS = new org.apache.tomcat.jdbc.pool.DataSource(props);
     }
+    
+    private final String jdbcURL = "jdbc:stub";
+    private final String dbDriver = "com.zaxxer.hikari.benchmark.stubs.StubDriver";
 
+//    private final String jdbcURL = "jdbc:h2:~/test";
+//    private final String dbDriver = "org.h2.Driver";
+
+    
     protected void setupBone()
     {
         BoneCPConfig config = new BoneCPConfig();
@@ -146,7 +162,7 @@ public class BenchBase
         config.setResetConnectionOnClose(true);
         config.setDefaultTransactionIsolation("READ_COMMITTED");
         config.setDisableJMX(true);
-        config.setJdbcUrl("jdbc:stub");
+        config.setJdbcUrl(jdbcURL);
         config.setUsername("nobody");
         config.setPassword("nopass");
         config.setPoolStrategy("CACHED");
@@ -174,8 +190,8 @@ public class BenchBase
         try
         {
             ComboPooledDataSource cpds = new ComboPooledDataSource();
-            cpds.setDriverClass( "com.zaxxer.hikari.benchmark.stubs.StubDriver" );            
-            cpds.setJdbcUrl( "jdbc:stub" );
+            cpds.setDriverClass(dbDriver);            
+            cpds.setJdbcUrl(jdbcURL);
             cpds.setAcquireIncrement(1);
             cpds.setInitialPoolSize(MIN_POOL_SIZE);
             cpds.setMinPoolSize(MIN_POOL_SIZE);
@@ -196,7 +212,7 @@ public class BenchBase
     private void setupVibur()
     {
         ViburDBCPDataSource vibur = new ViburDBCPDataSource();
-        vibur.setJdbcUrl( "jdbc:stub" );
+        vibur.setJdbcUrl(jdbcURL);
         vibur.setPoolInitialSize(MIN_POOL_SIZE);
         vibur.setPoolMaxSize(maxPoolSize);
         vibur.setTestConnectionQuery("VALUES 1");
@@ -211,7 +227,7 @@ public class BenchBase
 
     private void setupDBCP2() {
         org.apache.commons.pool2.impl.GenericObjectPool<org.apache.commons.dbcp2.PoolableConnection> connectionPool;
-            DriverManagerConnectionFactory connectionFactory = new DriverManagerConnectionFactory("jdbc:stub", "sa", "");
+            DriverManagerConnectionFactory connectionFactory = new DriverManagerConnectionFactory(jdbcURL, "sa", "");
            
             // Wrap the connections and statements with pooled variants
             org.apache.commons.dbcp2.PoolableConnectionFactory poolableCF = null;
@@ -231,7 +247,21 @@ public class BenchBase
             connectionPool.setMaxTotal(maxPoolSize);
             connectionPool.setMaxWaitMillis(8000);
             connectionPool.setMinEvictableIdleTimeMillis((int) TimeUnit.MINUTES.toMillis(30));
-//            connectionPool.setNumTestsPerEvictionRun(numTestsPerEvictionRun);
+	    poolableCF.setPool(connectionPool);
             DS = new org.apache.commons.dbcp2.PoolingDataSource(connectionPool);
+    }
+
+    private void setupDBCP2basic() throws SQLException {
+	BasicDataSource ds = new BasicDataSource();
+	ds.setDriverClassName(dbDriver);
+	ds.setUsername("sa");
+	ds.setPassword("");
+	ds.setUrl(jdbcURL);
+	ds.setMaxTotal(maxPoolSize);
+        ds.setDefaultAutoCommit(false);
+        ds.setDefaultTransactionIsolation(Connection.TRANSACTION_READ_COMMITTED);
+	
+	ds.getConnection().createStatement().execute("CREATE TABLE IF NOT EXISTS test (column varchar);");
+	DS = ds;
     }
 }
